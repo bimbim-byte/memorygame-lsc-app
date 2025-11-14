@@ -1,0 +1,5 @@
+flet
+Pillow
+opencv-python
+numpy
+pywin32
