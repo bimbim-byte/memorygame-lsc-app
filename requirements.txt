@@ -1,4 +1,4 @@
-flet==0.70.0.dev6735
+flet==0.28.3
 Pillow
 opencv-python
 numpy
