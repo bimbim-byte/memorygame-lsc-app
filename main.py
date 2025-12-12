@@ -1,8 +1,8 @@
-import flet as ft
+import tkinter as tk
+from tkinter import ttk
 from datetime import datetime
 import os
 import shutil
-import sys
 import ctypes
 from ctypes import wintypes
 import win32con
@@ -10,18 +10,23 @@ import win32gui
 import win32api
 import json
 import configparser
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 import time
 import threading
-from functools import partial
 
 from file_utils import clear_folder
 from process_cards import ImageProcessor
 from image_utils import create_overlay_images
 
-# ===============================
-# OVERLAY WORKER
-# ===============================
+BG_MAIN    = "#121212"
+BG_HEADER  = "#1E1E1E"
+BG_BODY    = "#1E1E1E"
+BG_FOOTER  = "#1E1E1E"
+ACCENT     = "#00B0FF"
+TEXT_COLOR = "#FFFFFF"
+BTN_ACCENT = ACCENT
+BTN_TRASH  = "#FF5252"
+
 class BITMAPINFOHEADER(ctypes.Structure):
     _fields_ = [
         ("biSize", wintypes.DWORD),
@@ -61,7 +66,6 @@ class OverlayWorker(threading.Thread):
         self.pil_cache = []
         self.image_paths = []
 
-        # Load user32 & gdi32
         self.user32 = ctypes.windll.user32
         self.gdi32 = ctypes.windll.gdi32
 
@@ -83,19 +87,32 @@ class OverlayWorker(threading.Thread):
     def create_layered_window(self, width, height):
         hInstance = win32api.GetModuleHandle(None)
         className = "OverlayWindow"
+
         wndClass = win32gui.WNDCLASS()
         wndClass.lpfnWndProc = self.wnd_proc_factory()
         wndClass.hInstance = hInstance
         wndClass.lpszClassName = className
-        atom = win32gui.RegisterClass(wndClass)
+
+        try:
+            atom = win32gui.RegisterClass(wndClass)
+        except win32gui.error as e:
+            if e.winerror == 1410:
+                atom = className
+            else:
+                raise
 
         exStyle = win32con.WS_EX_LAYERED | win32con.WS_EX_TOPMOST
         style = win32con.WS_POPUP
-        hwnd = win32gui.CreateWindowEx(exStyle, atom, "Overlay", style,
-                                       0, 0, width, height,
-                                       0, 0, hInstance, None)
+
+        hwnd = win32gui.CreateWindowEx(
+            exStyle, atom, "Overlay", style,
+            0, 0, width, height,
+            0, 0, hInstance, None
+        )
+
         win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
         return hwnd
+
 
     def create_dib_from_pil(self, pil_img):
         if pil_img.mode != "RGBA":
@@ -105,8 +122,8 @@ class OverlayWorker(threading.Thread):
 
         raw = pil_img.tobytes("raw", "BGRA")
         width, height = pil_img.size
-        bmi = BITMAPINFO()  # BUKAN self.BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)  # BUKAN self.BITMAPINFOHEADER
+        bmi = BITMAPINFO() 
+        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)  
         bmi.bmiHeader.biWidth = width
         bmi.bmiHeader.biHeight = -height
         bmi.bmiHeader.biPlanes = 1
@@ -175,16 +192,15 @@ class OverlayWorker(threading.Thread):
         try:
             self.user32.UnregisterHotKey(self.hwnd_main, self.HOTKEY_NEXT_ID)
             self.user32.UnregisterHotKey(self.hwnd_main, self.HOTKEY_PREV_ID)
-            win32gui.PostQuitMessage(0)
+            win32api.PostThreadMessage(self.thread_id, win32con.WM_QUIT, 0, 0)
         except Exception:
             pass
         self.add_log("🛑 Overlay dihentikan dan hotkey dilepas.")
-
+    
     def cleanup(self):
         try:
-            pass
-            # clear_folder(self.config['folder']['process'])
-            # clear_folder(self.config['folder']['output'])
+            clear_folder(self.config['folder']['process'])
+            clear_folder(self.config['folder']['output'])
         except Exception:
             pass
         self.add_log("🧹 Cleanup selesai.")
@@ -226,7 +242,6 @@ class OverlayWorker(threading.Thread):
             self.screen_height = int(self.config['resolusi']['tinggi'])
             output_folder = self.config['folder']['output']
 
-            # Load semua gambar overlay
             self.image_paths = sorted([os.path.join(output_folder, f) for f in os.listdir(output_folder) if f.lower().endswith(".png")])
             for p in self.image_paths:
                 pil = Image.open(p).convert("RGBA")
@@ -236,10 +251,10 @@ class OverlayWorker(threading.Thread):
                 self.add_log("❌ Tidak ada gambar overlay ditemukan")
                 return
 
-            # Buat window
             self.hwnd_main = self.create_layered_window(self.screen_width, self.screen_height)
             self.register_hotkeys()
             self.show_index(0)
+            # self.thread_id = threading.get_ident() # error
 
             while self.running:
                 win32gui.PumpWaitingMessages()
@@ -252,456 +267,360 @@ class OverlayWorker(threading.Thread):
             if self.on_finish:
                 self.on_finish()
 
+def finish_actions():
+    disable_button(btn3)
+    enable_button(btn2)
+    enable_button(trash_btn)
 
-is_running = False
-current_task = None
+def disable_button(btn):
+    btn.config(state="disabled")
 
+def enable_button(btn):
+    btn.config(state="normal")
 
-def main(page: ft.Page):
-    page.title = "Console Display"
-    page.window.width = 800
-    page.window.height = 350
-    page.padding = 10
-    page.theme_mode = "dark"
+def check_file():
+    file_config = "config.ini"
+    file_json = "positions.json"
+    found = True
 
-    # Checkboxes
-    timestamp_cb = ft.Checkbox(label="Show Timestamp", value=True)
-    autoscroll_cb = ft.Checkbox(label="Autoscroll", value=True)
+    if not os.path.exists(file_config):
+        add_text("File 'config.ini' tidak ditemukan. Silahkan tekan tombol 'Create Config'.")
+        found = False
+    if not os.path.exists(file_json):
+        add_text("File 'positions.json' tidak ditemukan. Silahkan tekan tombol 'Create Config'.")
+        found = False
+    return found
 
-    # Status Config & Positions
-    status_text = ft.Text("Status: -", color=ft.Colors.CYAN, size=13)
+def check_config():
+    config = configparser.ConfigParser()
+    config.read('config.ini')
 
-    # ListView sebagai console (scrollable)
-    log_list = ft.ListView(expand=True, spacing=4, padding=ft.padding.symmetric(vertical=8, horizontal=8))
-    logs = []
-    MAX_LINES = 1000
+    struktur_wajib = {
+        'resolusi': ['lebar', 'tinggi'],
+        'json': ['offset'],
+        'folder': ['input', 'process', 'output'],
+        'border': ['x1', 'y1', 'x2', 'y2']
+    }
 
-    # The Buttons
-    button_style = dict(color="white", height=35, expand=True)
-    refresh_button = ft.ElevatedButton("🔄", bgcolor=ft.Colors.SECONDARY, **button_style)
-    button_config = ft.ElevatedButton("Create&Check Config", bgcolor=ft.Colors.BLUE, **button_style)
-    button_start = ft.ElevatedButton("Start Memory", bgcolor=ft.Colors.SECONDARY, **button_style)
-    button_stop = ft.ElevatedButton("Stop Memory", bgcolor=ft.Colors.SECONDARY, **button_style)
-    button_erase = ft.IconButton(icon=ft.Icons.DELETE_FOREVER_ROUNDED, tooltip="Clear Logs")
-
-    overlay_thread = {"worker": None}
-
-    def switch_button(value: int):
-        if value == 2:
-            button_start.disabled = True
-            button_start.bgcolor = ft.Colors.SECONDARY
-            button_stop.disabled = False
-            button_stop.bgcolor = ft.Colors.RED
-        elif value == 1:
-            button_start.disabled = False
-            button_start.bgcolor = ft.Colors.GREEN
-            button_stop.disabled = True
-            button_stop.bgcolor = ft.Colors.SECONDARY
-        else:
-            button_start.disabled = True
-            button_start.bgcolor = ft.Colors.SECONDARY
-            button_stop.disabled = True
-            button_stop.bgcolor = ft.Colors.SECONDARY
-        page.update()
-        
-    def load_image_paths(folder: str):
-        paths = []
-        i = 1
-        while True:
-            p = os.path.join(folder, f"Screenshot_{i}.png")
-            if os.path.exists(p):
-                paths.append(p)
-                i += 1
-            else:
-                break
-        if not paths:
-            if not os.path.isdir(folder):
-                return []
-            files = sorted([f for f in os.listdir(folder) if f.lower().endswith(".png")])
-            paths = [os.path.join(folder, f) for f in files]
-        return paths
-
-    def add_log(text: str, color=ft.Colors.WHITE):
-        if timestamp_cb.value:
-            text = f"[{datetime.now().strftime('%H:%M:%S')}] {text}"
-        logs.append(text)
-        log_list.auto_scroll = autoscroll_cb.value
-        log_list.controls.append(
-            ft.Text(text, style=ft.TextStyle(font_family="Consolas", size=13), color=color)
-        )
-        if len(logs) > MAX_LINES:
-            del logs[0: len(logs) - MAX_LINES]
-            del log_list.controls[0: len(log_list.controls) - MAX_LINES]
-        page.update()
-
-    def check_file():
-        file_config = "config.ini"
-        file_json = "positions.json"
-        found = True
-
-        if not os.path.exists(file_config):
-            add_log("File 'config.ini' tidak ditemukan. Silahkan tekan tombol 'Create Config'.", color=ft.Colors.RED)
-            found = False
-        if not os.path.exists(file_json):
-            add_log("File 'positions.json' tidak ditemukan. Silahkan tekan tombol 'Create Config'.", color=ft.Colors.RED)
-            found = False
-        return found
-
-    def check_config():
-        config = configparser.ConfigParser()
-        config.read('config.ini')
-
-        struktur_wajib = {
-            'resolusi': ['lebar', 'tinggi'],
-            'json': ['offset'],
-            'folder': ['input', 'process', 'output'],
-            'border': ['x1', 'y1', 'x2', 'y2']
-        }
-
-        for section, keys in struktur_wajib.items():
-            if section not in config:
-                print(f"❌ Bagian [{section}] tidak ditemukan.")
+    for section, keys in struktur_wajib.items():
+        if section not in config:
+            print(f"❌ Bagian [{section}] tidak ditemukan.")
+            return False
+        for key in keys:
+            if key not in config[section] or not config[section][key].strip():
+                add_text(f"❌ Nilai '{key}' pada [{section}] kosong atau tidak ada.")
                 return False
-            for key in keys:
-                if key not in config[section] or not config[section][key].strip():
-                    add_log(f"❌ Nilai '{key}' pada [{section}] kosong atau tidak ada.", color=ft.Colors.RED)
-                    return False
 
+    try:
+        lebar = int(config['resolusi']['lebar'])
+        tinggi = int(config['resolusi']['tinggi'])
+        if lebar <= 0 or tinggi <= 0:
+            add_text("❌ resolusi harus bernilai positif.")
+            return False
+    except ValueError:
+        add_text("❌ resolusi.lebar dan resolusi.tinggi harus berupa angka.")
+        return False
+
+    offset_path = config['json']['offset']
+    if not os.path.isfile(offset_path):
+        add_text(f"❌ File JSON '{offset_path}' tidak ditemukan.")
+        return False
+
+    for key in ['input', 'process', 'output']:
+        folder_path = config['folder'][key]
+        if not os.path.isdir(folder_path):
+            add_text(f"❌ Folder '{folder_path}' untuk [{key}] tidak ditemukan.")
+            return False
+
+    try:
+        x1 = int(config['border']['x1'])
+        y1 = int(config['border']['y1'])
+        x2 = int(config['border']['x2'])
+        y2 = int(config['border']['y2'])
+    except ValueError:
+        add_text("❌ Semua nilai di [border] harus berupa angka.")
+        return False
+
+    try:
+        with open(offset_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        add_text(f"❌ File JSON tidak valid: {e}")
+        return False
+    except Exception as e:
+        add_text(f"❌ Gagal membaca file: {e}")
+        return False
+
+    if not isinstance(data, dict):
+        add_text("❌ Struktur JSON harus berupa objek (dictionary).")
+        return False
+
+    for key, value in data.items():
         try:
-            lebar = int(config['resolusi']['lebar'])
-            tinggi = int(config['resolusi']['tinggi'])
-            if lebar <= 0 or tinggi <= 0:
-                add_log("❌ resolusi harus bernilai positif.", color=ft.Colors.RED)
-                return False
+            int(key)
         except ValueError:
-            add_log("❌ resolusi.lebar dan resolusi.tinggi harus berupa angka.", color=ft.Colors.RED)
+            add_text(f"❌ Key '{key}' bukan angka valid.")
             return False
 
-        offset_path = config['json']['offset']
-        if not os.path.isfile(offset_path):
-            add_log(f"❌ File JSON '{offset_path}' tidak ditemukan.", color=ft.Colors.RED)
+        if not isinstance(value, dict):
+            add_text(f"❌ Nilai untuk key '{key}' bukan objek (dict).")
             return False
 
-        for key in ['input', 'process', 'output']:
-            folder_path = config['folder'][key]
-            if not os.path.isdir(folder_path):
-                add_log(f"❌ Folder '{folder_path}' untuk [{key}] tidak ditemukan.", color=ft.Colors.RED)
-                return False
+        if 'x' not in value or 'y' not in value:
+            add_text(f"❌ Key '{key}' tidak memiliki 'x' dan 'y'.")
+            return False
 
         try:
-            x1 = int(config['border']['x1'])
-            y1 = int(config['border']['y1'])
-            x2 = int(config['border']['x2'])
-            y2 = int(config['border']['y2'])
+            int(value['x'])
+            int(value['y'])
         except ValueError:
-            add_log("❌ Semua nilai di [border] harus berupa angka.", color=ft.Colors.RED)
-            return False
-    
-        try:
-            with open(offset_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except json.JSONDecodeError as e:
-            add_log(f"❌ File JSON tidak valid: {e}", color=ft.Colors.RED)
-            return False
-        except Exception as e:
-            add_log(f"❌ Gagal membaca file: {e}", color=ft.Colors.RED)
+            add_text(f"❌ Nilai x/y untuk key '{key}' harus berupa angka.")
             return False
 
-        if not isinstance(data, dict):
-            add_log("❌ Struktur JSON harus berupa objek (dictionary).", color=ft.Colors.RED)
-            return False
+    add_text("✅ File JSON valid dan lengkap.")
 
-        for key, value in data.items():
-            try:
-                int(key)
-            except ValueError:
-                add_log(f"❌ Key '{key}' bukan angka valid.", color=ft.Colors.RED)
-                return False
+    return True
 
-            if not isinstance(value, dict):
-                add_log(f"❌ Nilai untuk key '{key}' bukan objek (dict).", color=ft.Colors.RED)
-                return False
+def refresh_clicked():
+    add_text("Button -> 'Refresh button' ditekan")
+    if check_file():
+        if check_config():
+            add_text("File 'config.ini' dan 'positions.json' ditemukan. Siap menjalankan program")
+            status_label.config(text="Status: Configuration File Found")
+            enable_button(btn2)
+            disable_button(btn3)
 
-            if 'x' not in value or 'y' not in value:
-                add_log(f"❌ Key '{key}' tidak memiliki 'x' dan 'y'.", color=ft.Colors.RED)
-                return False
+    else:
+        status_label.config(text="Status: Configuration File not Found")
+        disable_button(btn2)
+        disable_button(btn3)
 
-            try:
-                int(value['x'])
-                int(value['y'])
-            except ValueError:
-                add_log(f"❌ Nilai x/y untuk key '{key}' harus berupa angka.", color=ft.Colors.RED)
-                return False
-
-        add_log("✅ File JSON valid dan lengkap.", color=ft.Colors.GREEN)
-
-        return True
-
-    def refresh_clicked(e=None):
-        add_log("Button -> 'Refresh button' ditekan", color=ft.Colors.YELLOW)
-        if check_file():
-            if check_config():
-                add_log("File 'config.ini' dan 'positions.json' ditemukan. Siap menjalankan program", color=ft.Colors.YELLOW)
-                status_text.value = "Status: Configuration File Found"
-                status_text.color = ft.Colors.GREEN
-                refresh_button.bgcolor = ft.Colors.GREEN
-                switch_button(1)
-        else:
-            status_text.value = "Status: Configuration File not Found"
-            status_text.color = ft.Colors.RED
-            refresh_button.bgcolor = ft.Colors.RED
-            switch_button(0)
-        page.update()
-
-    def create_folder(path_folder: str):
-        try:
-            os.makedirs(path_folder, exist_ok=True)
-            add_log(f"Folder '{path_folder}' siap digunakan.", color=ft.Colors.YELLOW)
-        except Exception as e:
-            add_log(f"Gagal membuat folder '{path_folder}': {e}", color=ft.Colors.RED)
-        return path_folder
-
-    def create_config(config_path='config.ini'):
-        game_width = 800
-        game_height = 600
-        cols = 6
-        rows = 5
-        jarak_x = 64
-        jarak_y = 60
-
-        user32 = ctypes.windll.user32
-        screen_width = user32.GetSystemMetrics(0)
-        screen_height = user32.GetSystemMetrics(1)
-
-        offset_x = (screen_width - game_width) // 2
-        offset_y = (screen_height - game_height) // 2 + 5
-
-        tikum_x = offset_x + 44
-        tikum_y = offset_y + 183
-
-        arr_x = [jarak_x * n + tikum_x for n in range(cols)]
-        arr_y = [jarak_y * n + tikum_y for n in range(rows)]
-
-        positions = {}
-        no = 1
-        for i in range(rows):
-            for j in range(cols):
-                positions[no] = {"x": arr_x[j], "y": arr_y[i]}
-                no += 1
-
-        with open("positions.json", "w") as f:
-            json.dump(positions, f, indent=2)
-
-        input_path = create_folder("input")
-        process_path =  create_folder("process")
-        output_path = create_folder("output")
-        
-        if not input_path.endswith("\\"):
-            input_path += "\\"
-        if not process_path.endswith("\\"):
-            process_path += "\\"
-        if not output_path.endswith("\\"):
-            output_path += "\\"
-
-        with open("config.ini", "w") as config:
-            config.write("[resolusi]\n")
-            config.write(f"lebar={screen_width}\n")
-            config.write(f"tinggi={screen_height}\n\n")
-
-            config.write("[json]\n")
-            config.write("offset=positions.json\n\n")
-
-            config.write("[folder]\n")
-            config.write(f"input={input_path}\n")
-            config.write(f"process={process_path}\n")
-            config.write(f"output={output_path}\n\n")
-
-            x1 = positions[1]["x"] - 14
-            y1 = positions[1]["y"] - 8
-            x2 = positions[30]["x"] + 66
-            y2 = positions[30]["y"] + 60
-
-            config.write("[border]\n")
-            config.write(f"x1={x1}\n")
-            config.write(f"y1={y1}\n")
-            config.write(f"x2={x2}\n")
-            config.write(f"y2={y2}\n")
-
-        add_log("✅ File 'positions.json' dan 'config.ini' berhasil disimpan.", color=ft.Colors.YELLOW)
-        add_log("Silahkan jalankan ulang program.", color=ft.Colors.YELLOW)
-
-    # Fungsi tombol
-    def on_b1(e): 
-        add_log("Button -> 'Create config' ditekan", color=ft.Colors.BLUE)
-        if check_file():
-            time.sleep(2)
-            refresh_clicked()
-        else:
-            create_config()
-            time.sleep(2)
-            refresh_clicked()
-
-    def on_b2(e): 
-        if overlay_thread["worker"] and overlay_thread["worker"].is_alive():
-            add_log("⚠️ Overlay sudah berjalan.")
-            return
-        config = load_config("config.ini")
-        worker = OverlayWorker(config, add_log, on_finish=lambda: switch_button(1))
-        overlay_thread["worker"] = worker
-        worker.start()
-        switch_button(2)
-        # global is_running, current_task
-        # add_log("Button -> 'Start Memory' ditekan", color=ft.Colors.GREEN)
-
-        # # Switch tombol
-        # switch_button(2)
-        # is_running = True
-
-        # display_status = False
-
-        # async def run_memory_process():
-        #     global is_running
-        #     threshold = 0.9
-        #     box_size = 52
-
-        #     config = load_config('config.ini') 
-        #     input_folder = config['folder']['input']
-        #     process_folder = config['folder']['process']
-        #     output_folder = config['folder']['output']
-        #     screen_width = int(config['resolusi']['lebar'])
-        #     screen_height = int(config['resolusi']['tinggi'])
-        #     json_file = config['json']['offset']
-
-        #     if not os.path.exists(json_file):
-        #         add_log(f"File JSON offsets tidak ditemukan: {json_file}", color=ft.Colors.RED)
-        #         switch_button(1)
-        #         return
-
-        #     image_paths = load_image_paths(input_folder)
-        #     if not image_paths:
-        #         add_log(f"Tidak menemukan gambar di folder: {output_folder}", color=ft.Colors.RED)
-        #         switch_button(1)
-        #         return
-
-        #     with open(json_file, "r", encoding="utf-8") as f:
-        #         offsets = json.load(f)
-            
-        #     try:
-        #         process = ImageProcessor(input_folder, process_folder, box_size)
-        #         if not is_running: return
-
-        #         add_log("Proses 1 : Cropping...", color=ft.Colors.YELLOW)
-        #         process.process_cropping(offsets)
-        #         add_log("Proses 1 : Done ✅", color=ft.Colors.GREEN)
-
-        #         if not is_running: return
-        #         add_log("Proses 2 : Matching...", color=ft.Colors.YELLOW)
-        #         matched_pairs = process.process_matching(threshold)
-        #         add_log("Proses 2 : Done ✅", color=ft.Colors.GREEN)
-
-        #         if not is_running: return
-        #         add_log("Proses 3 : Overlaying...", color=ft.Colors.YELLOW)
-        #         create_overlay_images(
-        #             matched_pairs, offsets, output_folder, screen_width, screen_height,
-        #             int(config['border']['x1']), int(config['border']['y1']),
-        #             int(config['border']['x2']), int(config['border']['y2']),
-        #             box_size
-        #         )
-        #         add_log("Proses 3 : Done ✅", color=ft.Colors.GREEN)
-
-        #         display_status = True
-
-        #     except Exception as err:
-        #         add_log(f"❌ Error selama proses: {err}", color=ft.Colors.RED)
-
-        #     finally:
-        #         switch_button(1)
-        #         is_running = False
-        #         add_log("✅ Semua proses selesai.", color=ft.Colors.GREEN)
-            
-        #     if display_status:
-        #         pass
-        #         # hwnd_main = create_layered_window()
-        #         # preload_images()
-        #         # show_index(0)
-        #         # register_hotkeys(hwnd_main)
-
-        # # Jalankan proses async tanpa blocking UI
-        # current_task = page.run_task(run_memory_process)
-
-    def on_b3(e): 
-        worker = overlay_thread["worker"]
-        if worker and worker.is_alive():
-            worker.stop()
-            add_log("⛔ Program Dihentikan, dan Screenshot dihapus.")
-            on_clear(None)
-        switch_button(1)
-
-        # global is_running, current_task
-        # add_log("Button -> 'Stop Memory' ditekan", color=ft.Colors.RED)
-        # is_running = False
-        # switch_button(1)
-        # add_log("⛔ Proses dihentikan oleh pengguna.", color=ft.Colors.RED)
-
-    
-    def load_config(config_path='config.ini'):
+def load_config(config_path='config.ini'):
         config = configparser.ConfigParser()
         config.read(config_path)
         return config
+
+def on_clear():
+    config = load_config('config.ini')
+    input_folder = config['folder']['input']
+    process_folder = config['folder']['process']
+    output_folder = config['folder']['output']
+
+    folders = [input_folder, process_folder, output_folder]
+
+    for folder in folders:
+        if not os.path.exists(folder):
+            continue
+
+        for item in os.listdir(folder):
+            item_path = os.path.join(folder, item)
+            try:
+                if os.path.isfile(item_path) or os.path.islink(item_path):
+                    os.remove(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+            except Exception as err:
+                print(f"Gagal menghapus {item_path}: {err}")
+
+    add_text("Seluruh isi folder berhasil dihapus tanpa menghapus folder utamanya.")
+
+def create_folder(path_folder: str):
+    try:
+        os.makedirs(path_folder, exist_ok=True)
+        add_text(f"Folder '{path_folder}' siap digunakan.")
+    except Exception as e:
+        add_text(f"Gagal membuat folder '{path_folder}': {e}")
+    return path_folder
+
+def create_config(config_path='config.ini') :
+    game_width = 800
+    game_height = 600
+    cols = 6
+    rows = 5
+    jarak_x = 64
+    jarak_y = 60
+
+    user32 = ctypes.windll.user32
+    screen_width = user32.GetSystemMetrics(0)
+    screen_height = user32.GetSystemMetrics(1)
+
+    offset_x = (screen_width - game_width) // 2
+    offset_y = (screen_height - game_height) // 2 + 5
+
+    tikum_x = offset_x + 44
+    tikum_y = offset_y + 183
+
+    arr_x = [jarak_x * n + tikum_x for n in range(cols)]
+    arr_y = [jarak_y * n + tikum_y for n in range(rows)]
+
+    positions = {}
+    no = 1
+    for i in range(rows):
+        for j in range(cols):
+            positions[no] = {"x": arr_x[j], "y": arr_y[i]}
+            no += 1
+
+    with open("positions.json", "w") as f:
+        json.dump(positions, f, indent=2)
+
+    input_path = create_folder("input")
+    process_path =  create_folder("process")
+    output_path = create_folder("output")
     
-    def on_clear(e):
-        config = load_config('config.ini') 
-        # input_folder = config['folder']['input']
-        process_folder = config['folder']['process']
-        output_folder = config['folder']['output']
+    if not input_path.endswith("\\"):
+        input_path += "\\"
+    if not process_path.endswith("\\"):
+        process_path += "\\"
+    if not output_path.endswith("\\"):
+        output_path += "\\"
 
-        # folders = [input_folder, process_folder, output_folder]
-        folders = [process_folder, output_folder]
+    with open("config.ini", "w") as config:
+        config.write("[resolusi]\n")
+        config.write(f"lebar={screen_width}\n")
+        config.write(f"tinggi={screen_height}\n\n")
 
-        for folder in folders:
-            if not os.path.exists(folder):
-                continue
+        config.write("[json]\n")
+        config.write("offset=positions.json\n\n")
 
-            for item in os.listdir(folder):
-                item_path = os.path.join(folder, item)
-                try:
-                    if os.path.isfile(item_path) or os.path.islink(item_path):
-                        os.remove(item_path)
-                    elif os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                except Exception as err:
-                    print(f"Gagal menghapus {item_path}: {err}")
-        
-        switch_button(1)
-        
-        add_log("Seluruh isi folder berhasil dihapus tanpa menghapus folder utamanya.", color=ft.Colors.YELLOW)
- 
-    refresh_row = ft.Row(
-        [
-            refresh_button,
-            status_text
-        ],
-        spacing=15,
-        alignment=ft.MainAxisAlignment.START
-    )
+        config.write("[folder]\n")
+        config.write(f"input={input_path}\n")
+        config.write(f"process={process_path}\n")
+        config.write(f"output={output_path}\n\n")
 
-    controls_top = ft.Row([timestamp_cb, autoscroll_cb, refresh_row], spacing=30)
+        x1 = positions[1]["x"] - 14
+        y1 = positions[1]["y"] - 8
+        x2 = positions[30]["x"] + 66
+        y2 = positions[30]["y"] + 60
 
-    refresh_button.on_click = refresh_clicked
-    button_config.on_click = on_b1
-    button_start.on_click = on_b2
-    button_stop.on_click = on_b3
+        config.write("[border]\n")
+        config.write(f"x1={x1}\n")
+        config.write(f"y1={y1}\n")
+        config.write(f"x2={x2}\n")
+        config.write(f"y2={y2}\n")
 
-    button_erase.on_click = on_clear
+    add_text("✅ File 'positions.json' dan 'config.ini' berhasil disimpan.")
+    add_text("Silahkan jalankan ulang program.")
+    pass
 
-    button_start.disabled = True
-    button_stop.disabled = True
+def on_b1():
+    add_text("Button -> 'Create config' ditekan")
+    if check_file():
+        time.sleep(2)
+        refresh_clicked()
+    else:
+        create_config()
+        time.sleep(2)
+        refresh_clicked()
 
-    buttons_row = ft.Row([button_config, button_start, button_stop, button_erase], alignment=ft.MainAxisAlignment.SPACE_EVENLY, spacing=15 )
+def on_b2():
+    if overlay_thread["worker"] and overlay_thread["worker"].is_alive():
+        add_text("⚠️ Overlay sudah berjalan.")
+        return
+    config = load_config("config.ini")
+    worker = OverlayWorker(config, add_text, on_finish= finish_actions)
+    overlay_thread["worker"] = worker
+    worker.start()
+    enable_button(btn3)
+    disable_button(btn2)
+    disable_button(trash_btn)
 
-    page.add(controls_top, log_list, buttons_row)
-    page.update()
-    
-    refresh_clicked()
+def on_b3():
+    worker = overlay_thread["worker"]
+    if worker and worker.is_alive():
+        worker.stop()
+        add_text("⛔ Program Dihentikan, dan Screenshot dihapus.")
+        on_clear()
 
-ft.app(target=main)
+def add_text(msg):
+    if show_timestamp_var.get():
+        from datetime import datetime
+        msg = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
+    text_box.insert(tk.END, msg + "\n")
+    if autoscroll_var.get():
+        text_box.see(tk.END)
+
+root = tk.Tk()
+root.title("Modern UI Tkinter + Icons")
+root.geometry("800x350")
+root.minsize(800, 350)
+root.maxsize(800, 350)
+root.configure(bg=BG_MAIN)
+refresh_img = tk.PhotoImage(file="icon/refresh.png")
+trash_img   = tk.PhotoImage(file="icon/trash.png")
+
+# ----------------------------
+# HEADER
+# ----------------------------
+header = tk.Frame(root, height=40, bg=BG_HEADER)
+header.pack(fill="x")
+header.pack_propagate(False)
+
+show_timestamp_var = tk.BooleanVar()
+autoscroll_var = tk.BooleanVar()
+
+show_timestamp_var.set(True)
+autoscroll_var.set(True)
+
+ck1 = ttk.Checkbutton(header, text="Show Timestamp", variable=show_timestamp_var)
+ck1.pack(side="left", padx=10)
+ck1.state(["selected"])
+
+ck2 = ttk.Checkbutton(header, text="Autoscroll", variable=autoscroll_var)
+ck2.pack(side="left", padx=10)
+ck2.state(["selected"])
+
+refresh_btn = tk.Button(header, image=refresh_img, command=refresh_clicked,
+                        bg=ACCENT, relief="flat", bd=0)
+refresh_btn.pack(side="left", padx=10)
+
+status_label = tk.Label(header, text="Status: ...",
+                        bg=BG_HEADER, fg=TEXT_COLOR)
+status_label.pack(side="left", padx=10)
+
+# ----------------------------
+# BODY
+# ----------------------------
+body_height = 350 - 40 - 45
+body = tk.Frame(root, bg=BG_BODY, height=body_height)
+body.pack(fill="x")
+body.pack_propagate(False)
+
+scrollbar = tk.Scrollbar(body, width=8, troughcolor=BG_BODY)
+scrollbar.pack(side="right", fill="y")
+
+text_box = tk.Text(body, wrap="word", bg="#222222", fg=TEXT_COLOR,
+                   insertbackground="white",
+                   yscrollcommand=scrollbar.set,
+                   relief="flat", bd=5, padx=5, pady=5, font=(None, 14))
+text_box.pack(fill="both", expand=True)
+
+scrollbar.config(command=text_box.yview)
+
+# ----------------------------
+# FOOTER
+# ----------------------------
+footer = tk.Frame(root, bg=BG_FOOTER, height=45)
+footer.pack(fill="x")
+footer.pack_propagate(False)
+
+btn_style = dict(width=18, bg=BTN_ACCENT, fg="white", relief="flat", bd=0, compound="left", padx=5)
+
+btn1 = tk.Button(footer, text="Create&Check Config", command=on_b1, **btn_style)
+btn1.pack(side="left", padx=5)
+btn2 = tk.Button(footer, text="Start Memory", command=on_b2, **btn_style)
+btn2.pack(side="left", padx=5)
+btn3 = tk.Button(footer, text="Stop Memory", command=on_b3, **btn_style)
+btn3.pack(side="left", padx=5)
+
+trash_btn = tk.Button(footer, image=trash_img, command=on_clear,
+                      bg=BTN_TRASH, relief="flat", bd=0)
+trash_btn.pack(side="right", padx=10)
+
+disable_button(btn2)
+disable_button(btn3)
+
+refresh_clicked()
+
+overlay_thread = {"worker": None}
+
+root.mainloop()

@@ -1,5 +1,2 @@
-flet==0.28.3
-Pillow
-opencv-python
-numpy
-pywin32
+Pillow>=9.0.0
+pywin32>=305
