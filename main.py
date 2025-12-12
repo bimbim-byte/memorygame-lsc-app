@@ -458,7 +458,7 @@ def create_config(config_path='config.ini') :
     for i in range(rows):
         for j in range(cols):
             positions[no] = {"x": arr_x[j], "y": arr_y[i]}
-            no += 
+            no += 1
 
     with open("positions.json", "w") as f:
         json.dump(positions, f, indent=2)
