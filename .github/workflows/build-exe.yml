@@ -29,8 +29,11 @@ jobs:
       run: |
         if (Test-Path build) { Remove-Item -Recurse -Force build }
         if (Test-Path dist) { Remove-Item -Recurse -Force dist }
-
-        pyinstaller --noconfirm --onefile --windowed --name LostSagaMemoryOverlay main.py
+    
+        pyinstaller --noconfirm --onefile --windowed --name LostSagaMemoryOverlay main.py `
+            --hidden-import=win32api `
+            --hidden-import=win32con `
+            --hidden-import=win32gui
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
