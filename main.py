@@ -13,6 +13,7 @@ import configparser
 from PIL import Image
 import time
 import threading
+import sys
 
 from file_utils import clear_folder
 from process_cards import ImageProcessor
@@ -266,6 +267,14 @@ class OverlayWorker(threading.Thread):
             self.cleanup()
             if self.on_finish:
                 self.on_finish()
+
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
 
 def finish_actions():
     disable_button(btn3)
