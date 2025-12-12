@@ -458,7 +458,7 @@ def create_config(config_path='config.ini') :
     for i in range(rows):
         for j in range(cols):
             positions[no] = {"x": arr_x[j], "y": arr_y[i]}
-            no += 1
+            no += 
 
     with open("positions.json", "w") as f:
         json.dump(positions, f, indent=2)
@@ -545,8 +545,8 @@ root.geometry("800x350")
 root.minsize(800, 350)
 root.maxsize(800, 350)
 root.configure(bg=BG_MAIN)
-refresh_img = tk.PhotoImage(file="icon/refresh.png")
-trash_img   = tk.PhotoImage(file="icon/trash.png")
+refresh_img = tk.PhotoImage(file=resource_path("icon/refresh.png"))
+trash_img = tk.PhotoImage(file=resource_path("icon/trash.png"))
 
 # ----------------------------
 # HEADER
