@@ -486,7 +486,6 @@ def create_config(config_path='config.ini') :
         config.write(f"input={input_path}\n")
         config.write(f"process={process_path}\n")
         config.write(f"output={output_path}\n\n")
-
         x1 = positions[1]["x"] - 14
         y1 = positions[1]["y"] - 8
         x2 = positions[30]["x"] + 66
