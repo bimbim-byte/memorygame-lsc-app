@@ -3,7 +3,7 @@
 Helps players complete the mission of matching 15 heroes in the Memory Game / Match Pair mini-event in Lost Saga.
 
 ## REMINDER
-!!! Using this repo may be considered safe for your account, but if your account gets blocked, it's your own responsibility !!!
+!!! Using this repo may be considered not safe for your account, but if your account gets blocked, it's your own responsibility !!!
 
 ## Additional Required Applications
 - Lightshot (Screenshot App)
