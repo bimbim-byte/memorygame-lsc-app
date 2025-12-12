@@ -25,10 +25,11 @@ jobs:
         pip install pyinstaller
 
     - name: Build EXE
+      shell: pwsh
       run: |
         # Hapus build lama
-        rmdir /s /q build || echo "No build folder"
-        rmdir /s /q dist || echo "No dist folder"
+        if (Test-Path build) { Remove-Item -Recurse -Force build }
+        if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 
         # Build dengan PyInstaller
         pyinstaller --noconfirm --onefile --windowed main.py --add-data "icon;icon"
