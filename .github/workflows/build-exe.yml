@@ -30,7 +30,7 @@ jobs:
         if (Test-Path build) { Remove-Item -Recurse -Force build }
         if (Test-Path dist) { Remove-Item -Recurse -Force dist }
     
-        pyinstaller --noconfirm --onefile --windowed --name LostSagaMemoryOverlay main.py `
+        pyinstaller --noconfirm --onefile --windowed --name LostSagaMemoryOverlay main.py --add-data "icon;icon" `
             --hidden-import=win32api `
             --hidden-import=win32con `
             --hidden-import=win32gui
